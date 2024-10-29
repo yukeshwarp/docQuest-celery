@@ -1,6 +1,6 @@
 import streamlit as st
 import json
-from utils.pdf_processing import process_pdf_pages
+from utils.pdf_processing import process_pdf_pages, process_pdf_task
 from utils.llm_interaction import ask_question
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import io
@@ -149,7 +149,7 @@ with st.sidebar:
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     future_to_file = {
                         executor.submit(
-                            process_pdf_pages, uploaded_file, first_file=(index == 0)
+                            process_pdf_task, uploaded_file, first_file=(index == 0)
                         ): uploaded_file
                         for index, uploaded_file in enumerate(new_files)
                     }
