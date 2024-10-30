@@ -3,6 +3,7 @@ import json
 from utils.pdf_processing import process_pdf_pages, process_pdf_task
 from utils.llm_interaction import ask_question
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
 import io
 import tiktoken
 from docx import Document
@@ -23,8 +24,8 @@ def count_tokens(text, model="gpt-4o"):
     return len(tokens)
 
 
-# Handle question prompt and add spinner at the bottom
-def handle_question(prompt, spinner_placeholder):
+# Asynchronous question handler
+async def handle_question(prompt, spinner_placeholder):
     if prompt:
         try:
             input_tokens = count_tokens(prompt)
@@ -47,8 +48,14 @@ def handle_question(prompt, spinner_placeholder):
                     """,
                     unsafe_allow_html=True,
                 )
-                answer = ask_question(
-                    st.session_state.documents, prompt, st.session_state.chat_history
+                
+                # Run the ask_question function in a separate thread to avoid blocking
+                answer = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    ask_question,
+                    st.session_state.documents,
+                    prompt,
+                    st.session_state.chat_history,
                 )
 
             output_tokens = count_tokens(answer)
@@ -189,9 +196,8 @@ if st.session_state.documents:
     prompt = st.chat_input("Ask me anything about your documents", key="chat_input")
     spinner_placeholder = st.empty()  # Placeholder for the spinner at the footer
     if prompt:
-        handle_question(
-            prompt, spinner_placeholder
-        )  # Pass the spinner placeholder to the handler
+        # Run the async function handle_question
+        asyncio.run(handle_question(prompt, spinner_placeholder))
 
 # Render chat messages
 display_chat()
