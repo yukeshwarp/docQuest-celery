@@ -1,5 +1,3 @@
-# pdf_processing_task.py
-
 import fitz
 import io
 import base64
@@ -10,11 +8,8 @@ from celery import Celery
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from nltk.corpus import stopwords
 from utils.file_conversion import convert_office_to_pdf
-from utils.llm_interaction import (
-    summarize_page,
-    get_image_explanation,
-    generate_system_prompt,
-)
+from utils.llm_interaction import summarize_page, get_image_explanation, generate_system_prompt
+from utils.config import redis_host, redis_pass
 
 nltk.download("stopwords", quiet=True)
 stop_words = set(stopwords.words("english"))
@@ -24,9 +19,9 @@ logging.basicConfig(
 )
 
 # Celery configuration
-redis_host = "yuktestredis.redis.cache.windows.net"
+redis_host = redis_host
 redis_port = 6379  # Default Redis port for non-SSL
-redis_password = "VBhswgzkLiRpsHVUf4XEI2uGmidT94VhuAzCaB2tVjs="
+redis_password = redis_pass
 
 app = Celery(
     "pdf_processor",
