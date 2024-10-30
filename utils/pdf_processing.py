@@ -6,7 +6,7 @@ import base64
 import logging
 import string
 import nltk
-from celery import Celery
+from celery import Celery, group
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from nltk.corpus import stopwords
 from utils.file_conversion import convert_office_to_pdf
@@ -43,7 +43,6 @@ app.conf.update(
 
 generated_system_prompt = None
 
-
 def remove_stopwords_and_blanks(text):
     """Preprocess text by removing stopwords, punctuation, and extra blank spaces."""
     text = text.translate(str.maketrans("", "", string.punctuation))
@@ -51,7 +50,6 @@ def remove_stopwords_and_blanks(text):
         [word for word in text.split() if word.lower() not in stop_words]
     )
     return " ".join(filtered_text.split())
-
 
 def detect_ocr_images_and_vector_graphics_in_pdf(page, ocr_text_threshold=0.4):
     """Detect OCR images or vector graphics on a given PDF page."""
@@ -79,9 +77,16 @@ def detect_ocr_images_and_vector_graphics_in_pdf(page, ocr_text_threshold=0.4):
 
     return None
 
+@app.task
+def process_page_batch_task(batch, pdf_stream, system_prompt, ocr_text_threshold=0.4):
+    """Celery task to process a single 5-page batch."""
+    pdf_document = fitz.open(stream=pdf_stream, filetype="pdf")
+    batch_data = process_page_batch(pdf_document, batch, system_prompt, ocr_text_threshold)
+    pdf_document.close()
+    return batch_data
 
 def process_page_batch(pdf_document, batch, system_prompt, ocr_text_threshold=0.4):
-    """Process a batch of PDF pages and extract summaries, full text, and image analysis."""
+    """Process a batch of 5 PDF pages and extract summaries, full text, and image analysis."""
     previous_summary = ""
     batch_data = []
 
@@ -129,9 +134,8 @@ def process_page_batch(pdf_document, batch, system_prompt, ocr_text_threshold=0.
 
     return batch_data
 
-
 def process_pdf_pages(uploaded_file, first_file=False):
-    """Process the PDF pages in batches and extract summaries and image analysis."""
+    """Process the PDF pages by splitting them into multiple tasks for each 5-page batch, with 25 batches per worker."""
     global generated_system_prompt
     file_name = uploaded_file.name
 
@@ -156,25 +160,36 @@ def process_pdf_pages(uploaded_file, first_file=False):
             first_200_words = " ".join(full_text.split()[:200])
             generated_system_prompt = generate_system_prompt(first_200_words)
 
-        batch_size = 5
+        # Define batch size and worker batch limit
+        page_batch_size = 5   # 5 pages per batch
+        worker_batch_limit = 25  # 25 batches per worker (125 pages)
+
+        # Create 5-page batches
         page_batches = [
-            range(i, min(i + batch_size, total_pages))
-            for i in range(0, total_pages, batch_size)
+            range(i, min(i + page_batch_size, total_pages))
+            for i in range(0, total_pages, page_batch_size)
         ]
 
-        with ThreadPoolExecutor() as executor:
-            future_to_batch = {
-                executor.submit(
-                    process_page_batch, pdf_document, batch, generated_system_prompt
-                ): batch
-                for batch in page_batches
-            }
-            for future in as_completed(future_to_batch):
-                try:
-                    batch_data = future.result()
-                    document_data["pages"].extend(batch_data)
-                except Exception as e:
-                    logging.error(f"Error processing batch: {e}")
+        # Group batches for each worker
+        grouped_batches = [
+            page_batches[i:i + worker_batch_limit]
+            for i in range(0, len(page_batches), worker_batch_limit)
+        ]
+
+        # Execute each group of 25 batches as a separate task group
+        task_groups = [
+            group(
+                process_page_batch_task.s(batch, pdf_stream, generated_system_prompt)
+                for batch in group_batches
+            ).apply_async()
+            for group_batches in grouped_batches
+        ]
+
+        # Aggregate results from all task groups
+        for task_group in task_groups:
+            task_results = task_group.get()  # Wait for the group to complete
+            for batch_data in task_results:
+                document_data["pages"].extend(batch_data)
 
         pdf_document.close()
         document_data["pages"].sort(key=lambda x: x["page_number"])
@@ -184,11 +199,10 @@ def process_pdf_pages(uploaded_file, first_file=False):
         logging.error(f"Error processing PDF file {file_name}: {e}")
         raise ValueError(f"Unable to process the file {file_name}. Error: {e}")
 
-
 @app.task
 def process_pdf_task(uploaded_file, first_file=False):
     """
-    Asynchronous task to process PDF pages and extract summaries and image analysis.
+    Asynchronous task to process PDF pages by creating workers for each group of 25 5-page batches.
     """
     try:
         result = process_pdf_pages(uploaded_file, first_file)
@@ -196,8 +210,3 @@ def process_pdf_task(uploaded_file, first_file=False):
     except Exception as e:
         logging.error(f"Failed to process PDF: {e}")
         raise e
-
-
-# Usage example to start processing:
-# from pdf_processing_task import process_pdf_task
-# task = process_pdf_task.delay(uploaded_file, first_file=True)
