@@ -7,12 +7,13 @@ import io
 import tiktoken
 from docx import Document
 import redis
+from utils.config import redis_host, redis_pass
 
 # Initialize Redis client
 redis_client = redis.StrictRedis(
-    host="yuktestredis.redis.cache.windows.net",
+    host=redis_host,
     port=6379,
-    password="VBhswgzkLiRpsHVUf4XEI2uGmidT94VhuAzCaB2tVjs=",
+    password=redis_pass,
     ssl=False
 )
   # Adjust Redis settings as needed
