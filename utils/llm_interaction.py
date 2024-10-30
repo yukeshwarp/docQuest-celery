@@ -9,32 +9,28 @@ from nltk.corpus import stopwords
 import tiktoken
 import concurrent.futures
 
-logging.basicConfig(level=logging.ERROR, format="%(asctime)s [%(levelname)s] %(message)s")
-nltk.download('stopwords', quiet=True)
+logging.basicConfig(
+    level=logging.ERROR, format="%(asctime)s [%(levelname)s] %(message)s"
+)
+nltk.download("stopwords", quiet=True)
 
-HEADERS = {
-        "Content-Type": "application/json",
-        "api-key": api_key
-    }
+HEADERS = {"Content-Type": "application/json", "api-key": api_key}
+
 
 def count_tokens(text, model="gpt-4o"):
-    """Count the tokens in a given text."""
     encoding = tiktoken.encoding_for_model(model)
     tokens = encoding.encode(text)
     return len(tokens)
 
 
-
-
 def preprocess_text(text):
     text = text.lower()
-    text = re.sub(r'[^\w\s]', '', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    stop_words = set(stopwords.words('english'))
-    text = ' '.join([word for word in text.split() if word not in stop_words])
+    text = re.sub(r"[^\w\s]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    stop_words = set(stopwords.words("english"))
+    text = " ".join([word for word in text.split() if word not in stop_words])
 
     return text
-
 
 
 def get_image_explanation(base64_image, retries=5, initial_delay=2):
@@ -42,37 +38,51 @@ def get_image_explanation(base64_image, retries=5, initial_delay=2):
     data = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant that responds in Markdown."},
-            {"role": "user", "content": [
-                {
-                    "type": "text",
-                    "text": "Explain the contents and figures or tables if present of this image of a document page. The explanation should be concise and semantically meaningful. Do not make assumptions about the specification and be accurate in your explanation."
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{base64_image}"}
-                }
-            ]}
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that responds in Markdown.",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Explain the contents and figures or tables if present of this image of a document page. The explanation should be concise and semantically meaningful. Do not make assumptions about the specification and be accurate in your explanation.",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{base64_image}"},
+                    },
+                ],
+            },
         ],
-        "temperature": 0.0
+        "temperature": 0.0,
     }
 
     url = f"{azure_endpoint}/openai/deployments/{model}/chat/completions?api-version={api_version}"
 
-    
     for attempt in range(retries):
         try:
-            response = requests.post(url, headers=headers, json=data, timeout=30)  
-            response.raise_for_status()  
-            return response.json().get('choices', [{}])[0].get('message', {}).get('content', "No explanation provided.")
-        
+            response = requests.post(url, headers=headers, json=data, timeout=30)
+            response.raise_for_status()
+            return (
+                response.json()
+                .get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "No explanation provided.")
+            )
+
         except requests.exceptions.Timeout as e:
             if attempt < retries - 1:
-                wait_time = initial_delay * (2 ** attempt)  
-                logging.warning(f"Timeout error. Retrying in {wait_time} seconds... (Attempt {attempt + 1}/{retries})")
+                wait_time = initial_delay * (2**attempt)
+                logging.warning(
+                    f"Timeout error. Retrying in {wait_time} seconds... (Attempt {attempt + 1}/{retries})"
+                )
                 time.sleep(wait_time)
             else:
-                logging.error(f"Request failed after {retries} attempts due to timeout: {e}")
+                logging.error(
+                    f"Request failed after {retries} attempts due to timeout: {e}"
+                )
                 return f"Error: Request timed out after {retries} retries."
 
         except requests.exceptions.RequestException as e:
@@ -88,9 +98,13 @@ def generate_system_prompt(document_content):
     data = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant that serves the task given."},
-            {"role": "user", "content":
-             f"""You are provided with a document. Based on its content, extract and identify the following details:
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that serves the task given.",
+            },
+            {
+                "role": "user",
+                "content": f"""You are provided with a document. Based on its content, extract and identify the following details:
             Document_content: {preprocessed_content}
 
             1. **Domain**: Identify the specific domain or field of expertise the document is focused on. Examples include technology, finance, healthcare, law, etc.
@@ -129,9 +143,10 @@ def generate_system_prompt(document_content):
         
             ---
 
-            Generate a response filling the template with appropriate details based on the content of the document and return the filled in template as response."""}
+            Generate a response filling the template with appropriate details based on the content of the document and return the filled in template as response.""",
+            },
         ],
-        "temperature": 0.5  
+        "temperature": 0.5,
     }
 
     try:
@@ -139,10 +154,15 @@ def generate_system_prompt(document_content):
             f"{azure_endpoint}/openai/deployments/{model}/chat/completions?api-version={api_version}",
             headers=headers,
             json=data,
-            timeout=20
+            timeout=20,
         )
         response.raise_for_status()
-        prompt_response = response.json().get('choices', [{}])[0].get('message', {}).get('content', "")
+        prompt_response = (
+            response.json()
+            .get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
         return prompt_response.strip()
 
     except requests.exceptions.RequestException as e:
@@ -150,11 +170,19 @@ def generate_system_prompt(document_content):
         return f"Error: Unable to generate system prompt due to network issues or API error."
 
 
-def summarize_page(page_text, previous_summary, page_number, system_prompt, max_retries=5, base_delay=1, max_delay=32):
+def summarize_page(
+    page_text,
+    previous_summary,
+    page_number,
+    system_prompt,
+    max_retries=5,
+    base_delay=1,
+    max_delay=32,
+):
     headers = HEADERS
     preprocessed_page_text = preprocess_text(page_text)
     preprocessed_previous_summary = preprocess_text(previous_summary)
-    
+
     prompt_message = (
         f"Please rewrite the following page content from (Page {page_number}) along with context from the previous page summary "
         f"to make them concise and well-structured. Maintain proper listing and referencing of the contents if present."
@@ -167,11 +195,11 @@ def summarize_page(page_text, previous_summary, page_number, system_prompt, max_
         "model": model,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt_message}
+            {"role": "user", "content": prompt_message},
         ],
-        "temperature": 0.0
+        "temperature": 0.0,
     }
-    
+
     attempt = 0
     while attempt < max_retries:
         try:
@@ -179,46 +207,59 @@ def summarize_page(page_text, previous_summary, page_number, system_prompt, max_
                 f"{azure_endpoint}/openai/deployments/{model}/chat/completions?api-version={api_version}",
                 headers=headers,
                 json=data,
-                timeout=50
+                timeout=50,
             )
             response.raise_for_status()
-            logging.info(f"Summary retrieved for page {page_number} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-            return response.json().get('choices', [{}])[0].get('message', {}).get('content', "No summary provided.").strip()
-        
+            logging.info(
+                f"Summary retrieved for page {page_number} at {time.strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            return (
+                response.json()
+                .get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "No summary provided.")
+                .strip()
+            )
+
         except requests.exceptions.RequestException as e:
             attempt += 1
             if attempt >= max_retries:
                 logging.error(f"Error summarizing page {page_number}: {e}")
                 return f"Error: Unable to summarize page {page_number} due to network issues or API error."
 
-            
-            delay = min(max_delay, base_delay * (2 ** attempt))  
-            jitter = random.uniform(0, delay)  
-            logging.warning(f"Retrying in {jitter:.2f} seconds (attempt {attempt}) due to error: {e}")
+            delay = min(max_delay, base_delay * (2**attempt))
+            jitter = random.uniform(0, delay)
+            logging.warning(
+                f"Retrying in {jitter:.2f} seconds (attempt {attempt}) due to error: {e}"
+            )
             time.sleep(jitter)
 
 
 def ask_question(documents, question, chat_history):
     headers = HEADERS
     preprocessed_question = preprocess_text(question)
-    
+
     def calculate_token_count(text):
-        return len(text.split())  
-    
+        return len(text.split())
+
     total_tokens = calculate_token_count(preprocessed_question)
 
-    # Calculate token count for all pages, removing the token limit check
     for doc_name, doc_data in documents.items():
         for page in doc_data["pages"]:
-            total_tokens += calculate_token_count(page.get('full_text', 'No full text available'))
+            total_tokens += calculate_token_count(
+                page.get("full_text", "No full text available")
+            )
 
-    # No token limit check, always run relevance checking
     def check_page_relevance(doc_name, page):
-        page_full_text = page.get('full_text', 'No full text available')
-        image_explanation = "\n".join(
-            f"Page {img['page_number']}: {img['explanation']}" for img in page.get("image_analysis", [])
-        ) or "No image analysis."
-        
+        page_full_text = page.get("full_text", "No full text available")
+        image_explanation = (
+            "\n".join(
+                f"Page {img['page_number']}: {img['explanation']}"
+                for img in page.get("image_analysis", [])
+            )
+            or "No image analysis."
+        )
+
         relevance_check_prompt = f"""
         Here's the full text and image analysis of a page:
 
@@ -234,10 +275,13 @@ def ask_question(documents, question, chat_history):
         relevance_data = {
             "model": model,
             "messages": [
-                {"role": "system", "content": "You are an assistant that determines if a page is relevant to a question."},
-                {"role": "user", "content": relevance_check_prompt}
+                {
+                    "role": "system",
+                    "content": "You are an assistant that determines if a page is relevant to a question.",
+                },
+                {"role": "user", "content": relevance_check_prompt},
             ],
-            "temperature": 0.0
+            "temperature": 0.0,
         }
 
         try:
@@ -245,24 +289,32 @@ def ask_question(documents, question, chat_history):
                 f"{azure_endpoint}/openai/deployments/{model}/chat/completions?api-version={api_version}",
                 headers=headers,
                 json=relevance_data,
-                timeout=60  
+                timeout=60,
             )
             response.raise_for_status()
-            relevance_answer = response.json().get('choices', [{}])[0].get('message', {}).get('content', "no").strip().lower()
+            relevance_answer = (
+                response.json()
+                .get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "no")
+                .strip()
+                .lower()
+            )
             logging.error(f"{relevance_answer}, page: {page['page_number']}")
             if relevance_answer == "yes":
                 return {
                     "doc_name": doc_name,
                     "page_number": page["page_number"],
                     "full_text": page_full_text,
-                    "image_explanation": image_explanation
+                    "image_explanation": image_explanation,
                 }
 
         except requests.exceptions.RequestException as e:
-            logging.error(f"Error checking relevance of page {page['page_number']} in '{doc_name}': {e}")
+            logging.error(
+                f"Error checking relevance of page {page['page_number']} in '{doc_name}': {e}"
+            )
             return None
 
-    # Run the relevance check in parallel for each page
     relevant_pages = []
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future_to_page = {
@@ -276,7 +328,6 @@ def ask_question(documents, question, chat_history):
             if result:
                 relevant_pages.append(result)
 
-    # Handle cases with no relevant pages found
     if not relevant_pages:
         return "The content of the provided documents does not contain an answer to your question."
 
@@ -293,8 +344,7 @@ def ask_question(documents, question, chat_history):
         for chat in chat_history
     )
 
-    prompt_message = (
-        f"""
+    prompt_message = f"""
         You are given the following relevant content from multiple documents:
 
         ---
@@ -311,18 +361,20 @@ def ask_question(documents, question, chat_history):
 
         Question: {preprocessed_question}
         """
-    )
 
-    prompt_tokens = calculate_token_count(prompt_message)  # Update token counting function
+    prompt_tokens = calculate_token_count(prompt_message)
     logging.error(prompt_tokens)
-    
+
     final_data = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "You are an assistant that answers questions based only on provided knowledge base."},
-            {"role": "user", "content": prompt_message}
+            {
+                "role": "system",
+                "content": "You are an assistant that answers questions based only on provided knowledge base.",
+            },
+            {"role": "user", "content": prompt_message},
         ],
-        "temperature": 0.0
+        "temperature": 0.0,
     }
 
     try:
@@ -330,13 +382,21 @@ def ask_question(documents, question, chat_history):
             f"{azure_endpoint}/openai/deployments/{model}/chat/completions?api-version={api_version}",
             headers=headers,
             json=final_data,
-            timeout=60  
+            timeout=60,
         )
         response.raise_for_status()
-        return response.json().get('choices', [{}])[0].get('message', {}).get('content', "No answer provided.").strip()
+        return (
+            response.json()
+            .get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "No answer provided.")
+            .strip()
+        )
 
     except requests.exceptions.RequestException as e:
         if e.response:
-            logging.error(f"Error {e.response.status_code} while answering question '{question}': {e}")
+            logging.error(
+                f"Error {e.response.status_code} while answering question '{question}': {e}"
+            )
         else:
             logging.error(f"Error answering question '{question}': {e}")

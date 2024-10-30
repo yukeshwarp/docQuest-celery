@@ -8,7 +8,6 @@ import io
 import tiktoken
 from docx import Document
 
-# Initialize session states for documents and chat history
 if "documents" not in st.session_state:
     st.session_state.documents = {}
 if "chat_history" not in st.session_state:
@@ -17,14 +16,12 @@ if "uploaded_files" not in st.session_state:
     st.session_state.uploaded_files = []
 
 
-# Token counting function
 def count_tokens(text, model="gpt-4o"):
     encoding = tiktoken.encoding_for_model(model)
     tokens = encoding.encode(text)
     return len(tokens)
 
 
-# Asynchronous question handler
 async def handle_question(prompt, spinner_placeholder):
     if prompt:
         try:
@@ -32,7 +29,6 @@ async def handle_question(prompt, spinner_placeholder):
             document_tokens = count_tokens(json.dumps(st.session_state.documents))
             total_input_tokens = input_tokens + document_tokens
 
-            # Display spinner at the footer during question processing
             with spinner_placeholder.container():
                 st.markdown(
                     """
@@ -48,8 +44,7 @@ async def handle_question(prompt, spinner_placeholder):
                     """,
                     unsafe_allow_html=True,
                 )
-                
-                # Run the ask_question function in a separate thread to avoid blocking
+
                 answer = await asyncio.get_event_loop().run_in_executor(
                     None,
                     ask_question,
@@ -71,18 +66,16 @@ async def handle_question(prompt, spinner_placeholder):
         except Exception as e:
             st.error(f"Error processing question: {e}")
         finally:
-            # Clear the spinner placeholder after processing
+
             spinner_placeholder.empty()
 
 
-# Reset session data
 def reset_session():
     st.session_state.documents = {}
     st.session_state.chat_history = []
     st.session_state.uploaded_files = []
 
 
-# Display chat history
 def display_chat():
     if st.session_state.chat_history:
         for i, chat in enumerate(st.session_state.chat_history):
@@ -99,7 +92,6 @@ def display_chat():
             st.markdown(user_message, unsafe_allow_html=True)
             st.markdown(assistant_message, unsafe_allow_html=True)
 
-            # Generate a Word document for download for each chat message
             chat_content = {
                 "question": chat["question"],
                 "answer": chat["answer"],
@@ -119,7 +111,6 @@ def display_chat():
             )
 
 
-# Generate Word document for each chat
 def generate_word_document(content):
     doc = Document()
     doc.add_heading("Chat Response", 0)
@@ -130,7 +121,6 @@ def generate_word_document(content):
     return doc
 
 
-# Sidebar for file upload
 with st.sidebar:
     uploaded_files = st.file_uploader(
         "Upload your documents",
@@ -146,7 +136,6 @@ with st.sidebar:
             else:
                 st.info(f"{uploaded_file.name} is already uploaded.")
 
-        # Processing newly uploaded files
         if new_files:
             progress_text = st.empty()
             progress_bar = st.progress(0)
@@ -186,23 +175,18 @@ with st.sidebar:
             mime="application/json",
         )
 
-# Main app header and subtitle
 st.image("logoD.png", width=200)
 st.title("docQuest")
 st.subheader("Unveil the Essence, Compare Easily, Analyze Smartly", divider="orange")
 
-# Display the chat interface and handle user prompt
 if st.session_state.documents:
     prompt = st.chat_input("Ask me anything about your documents", key="chat_input")
-    spinner_placeholder = st.empty()  # Placeholder for the spinner at the footer
+    spinner_placeholder = st.empty()
     if prompt:
-        # Run the async function handle_question
         asyncio.run(handle_question(prompt, spinner_placeholder))
 
-# Render chat messages
 display_chat()
 
-# Token statistics in the sidebar
 total_input_tokens = sum(chat["input_tokens"] for chat in st.session_state.chat_history)
 total_output_tokens = sum(
     chat["output_tokens"] for chat in st.session_state.chat_history

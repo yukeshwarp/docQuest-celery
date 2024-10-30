@@ -8,7 +8,11 @@ from celery import Celery
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from nltk.corpus import stopwords
 from utils.file_conversion import convert_office_to_pdf
-from utils.llm_interaction import summarize_page, get_image_explanation, generate_system_prompt
+from utils.llm_interaction import (
+    summarize_page,
+    get_image_explanation,
+    generate_system_prompt,
+)
 from utils.config import redis_host, redis_pass
 
 nltk.download("stopwords", quiet=True)
@@ -18,9 +22,8 @@ logging.basicConfig(
     level=logging.ERROR, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
-# Celery configuration
 redis_host = redis_host
-redis_port = 6379  # Default Redis port for non-SSL
+redis_port = 6379
 redis_password = redis_pass
 
 app = Celery(
@@ -30,7 +33,7 @@ app = Celery(
 )
 
 app.conf.update(
-    result_expires=3600,  # Keep task results for an hour
+    result_expires=3600,
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
@@ -40,7 +43,6 @@ generated_system_prompt = None
 
 
 def remove_stopwords_and_blanks(text):
-    """Preprocess text by removing stopwords, punctuation, and extra blank spaces."""
     text = text.translate(str.maketrans("", "", string.punctuation))
     filtered_text = " ".join(
         [word for word in text.split() if word.lower() not in stop_words]
@@ -49,7 +51,6 @@ def remove_stopwords_and_blanks(text):
 
 
 def detect_ocr_images_and_vector_graphics_in_pdf(page, ocr_text_threshold=0.4):
-    """Detect OCR images or vector graphics on a given PDF page."""
     try:
         images = page.get_images(full=True)
         text_blocks = page.get_text("blocks")
@@ -76,7 +77,6 @@ def detect_ocr_images_and_vector_graphics_in_pdf(page, ocr_text_threshold=0.4):
 
 
 def process_page_batch(pdf_document, batch, system_prompt, ocr_text_threshold=0.4):
-    """Process a batch of PDF pages and extract summaries, full text, and image analysis."""
     previous_summary = ""
     batch_data = []
 
@@ -126,7 +126,6 @@ def process_page_batch(pdf_document, batch, system_prompt, ocr_text_threshold=0.
 
 
 def process_pdf_pages(uploaded_file, first_file=False):
-    """Process the PDF pages in batches and extract summaries and image analysis."""
     global generated_system_prompt
     file_name = uploaded_file.name
 
@@ -182,17 +181,9 @@ def process_pdf_pages(uploaded_file, first_file=False):
 
 @app.task
 def process_pdf_task(uploaded_file, first_file=False):
-    """
-    Asynchronous task to process PDF pages and extract summaries and image analysis.
-    """
     try:
         result = process_pdf_pages(uploaded_file, first_file)
         return result
     except Exception as e:
         logging.error(f"Failed to process PDF: {e}")
         raise e
-
-
-# Usage example to start processing:
-# from pdf_processing_task import process_pdf_task
-# task = process_pdf_task.delay(uploaded_file, first_file=True)
