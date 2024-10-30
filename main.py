@@ -6,10 +6,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import io
 import tiktoken
 from docx import Document
+import redis
 
-# Initialize session states for documents and chat history
-if "documents" not in st.session_state:
-    st.session_state.documents = {}
+# Initialize Redis client
+redis_client = redis.StrictRedis(
+    host="yuktestredis.redis.cache.windows.net",
+    port=6379,
+    password="VBhswgzkLiRpsHVUf4XEI2uGmidT94VhuAzCaB2tVjs=",
+    ssl=False
+)
+  # Adjust Redis settings as needed
+
+# Initialize session states for chat history
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "uploaded_files" not in st.session_state:
@@ -28,7 +36,9 @@ def handle_question(prompt, spinner_placeholder):
     if prompt:
         try:
             input_tokens = count_tokens(prompt)
-            document_tokens = count_tokens(json.dumps(st.session_state.documents))
+            # Retrieve document data from Redis
+            document_data = json.loads(redis_client.get("documents") or "{}")
+            document_tokens = count_tokens(json.dumps(document_data))
             total_input_tokens = input_tokens + document_tokens
 
             # Display spinner at the footer during question processing
@@ -48,7 +58,7 @@ def handle_question(prompt, spinner_placeholder):
                     unsafe_allow_html=True,
                 )
                 answer = ask_question(
-                    st.session_state.documents, prompt, st.session_state.chat_history
+                    document_data, prompt, st.session_state.chat_history
                 )
 
             output_tokens = count_tokens(answer)
@@ -70,9 +80,9 @@ def handle_question(prompt, spinner_placeholder):
 
 # Reset session data
 def reset_session():
-    st.session_state.documents = {}
     st.session_state.chat_history = []
     st.session_state.uploaded_files = []
+    redis_client.delete("documents")  # Clear Redis document storage
 
 
 # Display chat history
@@ -134,8 +144,9 @@ with st.sidebar:
     if uploaded_files:
         new_files = []
         for index, uploaded_file in enumerate(uploaded_files):
-            if uploaded_file.name not in st.session_state.documents:
+            if uploaded_file.name not in st.session_state.uploaded_files:
                 new_files.append(uploaded_file)
+                st.session_state.uploaded_files.append(uploaded_file.name)
             else:
                 st.info(f"{uploaded_file.name} is already uploaded.")
 
@@ -158,9 +169,8 @@ with st.sidebar:
                         uploaded_file = future_to_file[future]
                         try:
                             document_data = future.result()
-                            st.session_state.documents[uploaded_file.name] = (
-                                document_data
-                            )
+                            # Store document data in Redis
+                            redis_client.set(uploaded_file.name, json.dumps(document_data))
                             st.success(f"{uploaded_file.name} processed successfully!")
                         except Exception as e:
                             st.error(f"Error processing {uploaded_file.name}: {e}")
@@ -170,22 +180,13 @@ with st.sidebar:
             progress_text.text("Processing complete.")
             progress_bar.empty()
 
-    if st.session_state.documents:
-        download_data = json.dumps(st.session_state.documents, indent=4)
-        st.download_button(
-            label="Download Document Analysis",
-            data=download_data,
-            file_name="document_analysis.json",
-            mime="application/json",
-        )
-
 # Main app header and subtitle
 st.image("logoD.png", width=200)
 st.title("docQuest")
 st.subheader("Unveil the Essence, Compare Easily, Analyze Smartly", divider="orange")
 
 # Display the chat interface and handle user prompt
-if st.session_state.documents:
+if st.session_state.uploaded_files:
     prompt = st.chat_input("Ask me anything about your documents", key="chat_input")
     spinner_placeholder = st.empty()  # Placeholder for the spinner at the footer
     if prompt:
