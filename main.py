@@ -6,6 +6,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import asyncio
 import io
 from docx import Document
+import tiktoken
+
+def count_tokens(text, model="gpt-4o"):
+    encoding = tiktoken.encoding_for_model(model)
+    tokens = encoding.encode(text)
+    return len(tokens)
+
+doc_token = 0
 
 if "documents" not in st.session_state:
     st.session_state.documents = {}
@@ -120,6 +128,7 @@ with st.sidebar:
                         uploaded_file = future_to_file[future]
                         try:
                             document_data = future.result()
+                            doc_token += count_tokens(str(document_data))
                             st.session_state.documents[uploaded_file.name] = (
                                 document_data
                             )
@@ -128,7 +137,8 @@ with st.sidebar:
                             st.error(f"Error processing {uploaded_file.name}: {e}")
 
                         progress_bar.progress((i + 1) / total_files)
-
+                        
+            st.sidebar.write(f"Total document tokens: {doc_token}")
             progress_text.text("Processing complete.")
             progress_bar.empty()
 
