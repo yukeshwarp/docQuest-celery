@@ -7,34 +7,17 @@ import asyncio
 import io
 from docx import Document
 
-# Initialize session state
 if "documents" not in st.session_state:
     st.session_state.documents = {}
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "uploaded_files" not in st.session_state:
     st.session_state.uploaded_files = []
-if "total_tokens" not in st.session_state:
-    st.session_state.total_tokens = 0  # Global token counter
 
 async def handle_question(prompt, spinner_placeholder):
     if prompt:
         try:
             with spinner_placeholder.container():
-                st.markdown(
-                    """
-                    <header>
-                    <div style="text-align: center;">
-                        <div class="spinner" style="margin: 20px;">
-                            <div class="bounce1"></div>
-                            <div class="bounce2"></div>
-                            <div class="bounce3"></div>
-                        </div>
-                    </div>
-                    </header>
-                    """,
-                    unsafe_allow_html=True,
-                )
 
                 answer, total_tokens = await asyncio.get_event_loop().run_in_executor(
                     None,
@@ -47,22 +30,21 @@ async def handle_question(prompt, spinner_placeholder):
             st.session_state.chat_history.append(
                 {
                     "question": prompt,
-                    "answer": answer,
+                    "answer": f"{answer}\nTotal tokens: {total_tokens}",
                 }
             )
-
-            st.session_state.total_tokens = total_tokens
 
         except Exception as e:
             st.error(f"Error processing question: {e}")
         finally:
             spinner_placeholder.empty()
 
+
 def reset_session():
     st.session_state.documents = {}
     st.session_state.chat_history = []
     st.session_state.uploaded_files = []
-    st.session_state.total_tokens = 0
+
 
 def display_chat():
     if st.session_state.chat_history:
@@ -96,6 +78,7 @@ def display_chat():
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             )
 
+
 def generate_word_document(content):
     doc = Document()
     doc.add_heading("Chat Response", 0)
@@ -103,7 +86,7 @@ def generate_word_document(content):
     doc.add_paragraph(f"Answer: {content['answer']}")
     return doc
 
-# Sidebar for file upload and reset
+
 with st.sidebar:
     uploaded_files = st.file_uploader(
         "Upload your documents",
@@ -158,23 +141,14 @@ with st.sidebar:
             mime="application/json",
         )
 
-    st.button("Reset Chat & Documents", on_click=reset_session)
-
-# Display token count in the sidebar
-if "total_tokens" in st.session_state:
-    st.sidebar.write(f"Total Tokens Used: {st.session_state.total_tokens}")
-
-# Main App Layout
 st.image("logoD.png", width=200)
 st.title("docQuest")
 st.subheader("Unveil the Essence, Compare Easily, Analyze Smartly", divider="orange")
 
-# Chat Input Section
 if st.session_state.documents:
     prompt = st.chat_input("Ask me anything about your documents", key="chat_input")
     spinner_placeholder = st.empty()
     if prompt:
         asyncio.run(handle_question(prompt, spinner_placeholder))
 
-# Display Chat History
 display_chat()
