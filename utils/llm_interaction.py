@@ -300,7 +300,6 @@ def ask_question(documents, question, chat_history):
                 .strip()
                 .lower()
             )
-            logging.error(f"{relevance_answer}, page: {page['page_number']}")
             if relevance_answer == "yes":
                 return {
                     "doc_name": doc_name,
@@ -329,7 +328,7 @@ def ask_question(documents, question, chat_history):
                 relevant_pages.append(result)
 
     if not relevant_pages:
-        return "The content of the provided documents does not contain an answer to your question."
+        return "The content of the provided documents does not contain an answer to your question.", total_tokens
 
     combined_relevant_content = ""
     for page in relevant_pages:
@@ -363,8 +362,6 @@ def ask_question(documents, question, chat_history):
         """
 
     prompt_tokens = calculate_token_count(prompt_message)
-    logging.error(prompt_tokens)
-
     final_data = {
         "model": model,
         "messages": [
@@ -385,7 +382,7 @@ def ask_question(documents, question, chat_history):
             timeout=60,
         )
         response.raise_for_status()
-        return (
+        answer_content = (
             response.json()
             .get("choices", [{}])[0]
             .get("message", {})
@@ -393,10 +390,11 @@ def ask_question(documents, question, chat_history):
             .strip()
         )
 
+        response_tokens = calculate_token_count(answer_content)
+        total_tokens += response_tokens
+
+        return answer_content, total_tokens
+
     except requests.exceptions.RequestException as e:
-        if e.response:
-            logging.error(
-                f"Error {e.response.status_code} while answering question '{question}': {e}"
-            )
-        else:
-            logging.error(f"Error answering question '{question}': {e}")
+        logging.error(f"Error answering question '{question}': {e}")
+        return "Error processing question.", total_tokens
