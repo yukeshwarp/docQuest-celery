@@ -138,7 +138,6 @@ with st.sidebar:
 
                         progress_bar.progress((i + 1) / total_files)
                         
-            st.sidebar.write(f"Total document tokens: {doc_token}")
             progress_text.text("Processing complete.")
             progress_bar.empty()
 
@@ -162,3 +161,5 @@ if st.session_state.documents:
         asyncio.run(handle_question(prompt, spinner_placeholder))
 
 display_chat()
+
+st.sidebar.write(f"Total document tokens: {doc_token}")
