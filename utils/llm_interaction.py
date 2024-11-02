@@ -8,6 +8,8 @@ import nltk
 from nltk.corpus import stopwords
 import tiktoken
 import concurrent.futures
+from utils.config import redis_host, redis_pass
+from celery import Celery, Task
 
 logging.basicConfig(
     level=logging.ERROR, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -235,109 +237,138 @@ def summarize_page(
             time.sleep(jitter)
 
 
+
+redis_host = redis_host
+redis_port = 6379
+redis_password = redis_pass
+
+celery_app = Celery(
+    'relevance_checker',
+    broker=f"redis://:{redis_password}@{redis_host}:{redis_port}/0",
+    backend=f"redis://:{redis_password}@{redis_host}:{redis_port}/0",
+)
+
+celery_app.conf.update(
+    broker_transport_options={'visibility_timeout': 3600},
+    redis_backend_use_ssl=True,
+    redis_backend_password="VBhswgzkLiRpsHVUf4XEI2uGmidT94VhuAzCaB2tVjs=",
+)
+
+
+class RelevanceCheckTask(Task):
+    autoretry_for = (requests.exceptions.RequestException,)
+    retry_kwargs = {'max_retries': 5}
+    retry_backoff = 2  # Exponential backoff factor
+
+    def exponential_backoff_with_jitter(self, attempt):
+        return (2 ** attempt + random.uniform(0, 1))  # Backoff with jitter
+
+
+@celery_app.task(bind=True, base=RelevanceCheckTask)
+def check_page_relevance_task(self, doc_name, page, model, preprocessed_question, azure_endpoint, headers, api_version):
+    attempt = self.request.retries
+    time.sleep(self.exponential_backoff_with_jitter(attempt))
+
+    page_full_text = page.get("full_text", "No full text available")
+    image_explanation = (
+        "\n".join(
+            f"Page {img['page_number']}: {img['explanation']}"
+            for img in page.get("image_analysis", [])
+        )
+        or "No image analysis."
+    )
+
+    relevance_check_prompt = f"""
+    Here's the full text and image analysis of a page:
+
+    Document: {doc_name}, Page {page['page_number']}
+    Full Text: {page_full_text}
+    Image Analysis: {image_explanation}
+
+    Question asked by user: {preprocessed_question}
+
+    Respond with "yes" if this page contains any relevant information related to the user's question, even if only a small part of the page has relevant content. Otherwise, respond with "no".
+    """
+
+    relevance_data = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are an assistant that determines if a page is relevant to a question.",
+            },
+            {"role": "user", "content": relevance_check_prompt},
+        ],
+        "temperature": 0.0,
+    }
+
+    try:
+        response = requests.post(
+            f"{azure_endpoint}/openai/deployments/{model}/chat/completions?api-version={api_version}",
+            headers=headers,
+            json=relevance_data,
+            timeout=60,
+        )
+        response.raise_for_status()
+        relevance_answer = (
+            response.json()
+            .get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "no")
+            .strip()
+            .lower()
+        )
+        if relevance_answer == "yes":
+            return {
+                "doc_name": doc_name,
+                "page_number": page["page_number"],
+                "full_text": page_full_text,
+                "image_explanation": image_explanation,
+            }
+        return None
+
+    except requests.exceptions.RequestException as e:
+        logging.error(
+            f"Error checking relevance of page {page['page_number']} in '{doc_name}': {e}"
+        )
+        raise self.retry(exc=e)
+
+
 def ask_question(documents, question, chat_history):
     headers = HEADERS
     preprocessed_question = preprocess_text(question)
+    relevant_pages = []
 
-    def calculate_token_count(text):
-        return len(text.split())
-
-    total_tokens = calculate_token_count(preprocessed_question)
-
+    # Submit relevance check tasks for each page in documents
+    futures = []
     for doc_name, doc_data in documents.items():
         for page in doc_data["pages"]:
-            total_tokens += calculate_token_count(
-                page.get("full_text", "No full text available")
+            future = check_page_relevance_task.delay(
+                doc_name, page, model, preprocessed_question, azure_endpoint, headers, api_version
             )
+            futures.append(future)
 
-    def check_page_relevance(doc_name, page):
-        page_full_text = page.get("full_text", "No full text available")
-        image_explanation = (
-            "\n".join(
-                f"Page {img['page_number']}: {img['explanation']}"
-                for img in page.get("image_analysis", [])
-            )
-            or "No image analysis."
-        )
-
-        relevance_check_prompt = f"""
-        Here's the full text and image analysis of a page:
-
-        Document: {doc_name}, Page {page['page_number']}
-        Full Text: {page_full_text}
-        Image Analysis: {image_explanation}
-
-        Question asked by user: {preprocessed_question}
-
-        Respond with "yes" if this page contains any relevant information related to the user's question, even if only a small part of the page has relevant content. Otherwise, respond with "no".
-        """
-
-        relevance_data = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are an assistant that determines if a page is relevant to a question.",
-                },
-                {"role": "user", "content": relevance_check_prompt},
-            ],
-            "temperature": 0.0,
-        }
-
+    # Collect results as they complete
+    for future in futures:
         try:
-            response = requests.post(
-                f"{azure_endpoint}/openai/deployments/{model}/chat/completions?api-version={api_version}",
-                headers=headers,
-                json=relevance_data,
-                timeout=60,
-            )
-            response.raise_for_status()
-            relevance_answer = (
-                response.json()
-                .get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "no")
-                .strip()
-                .lower()
-            )
-            if relevance_answer == "yes":
-                return {
-                    "doc_name": doc_name,
-                    "page_number": page["page_number"],
-                    "full_text": page_full_text,
-                    "image_explanation": image_explanation,
-                }
-
-        except requests.exceptions.RequestException as e:
-            logging.error(
-                f"Error checking relevance of page {page['page_number']} in '{doc_name}': {e}"
-            )
-            return None
-
-    relevant_pages = []
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future_to_page = {
-            executor.submit(check_page_relevance, doc_name, page): (doc_name, page)
-            for doc_name, doc_data in documents.items()
-            for page in doc_data["pages"]
-        }
-
-        for future in concurrent.futures.as_completed(future_to_page):
-            result = future.result()
+            result = future.get(timeout=70)  # Fetch result with timeout for each task
             if result:
                 relevant_pages.append(result)
+        except Exception as e:
+            logging.error(f"Error fetching relevance result: {e}")
 
     if not relevant_pages:
-        return "The content of the provided documents does not contain an answer to your question.", total_tokens
+        return "The content of the provided documents does not contain an answer to your question."
 
-    combined_relevant_content = ""
-    for page in relevant_pages:
-        combined_relevant_content += (
-            f"\nDocument: {page['doc_name']}, Page {page['page_number']}\n"
-            f"Full Text: {page['full_text']}\n"
-            f"Image Analysis: {page['image_explanation']}\n"
-        )
+    # Combine relevant content
+    combined_relevant_content = "\n".join(
+        f"Document: {page['doc_name']}, Page {page['page_number']}\n"
+        f"Full Text: {page['full_text']}\n"
+        f"Image Analysis: {page['image_explanation']}\n"
+        for page in relevant_pages
+    )
 
+    # Build conversation history for context
     conversation_history = "".join(
         f"User: {preprocess_text(chat['question'])}\nAssistant: {preprocess_text(chat['answer'])}\n"
         for chat in chat_history
@@ -361,7 +392,6 @@ def ask_question(documents, question, chat_history):
         Question: {preprocessed_question}
         """
 
-    prompt_tokens = calculate_token_count(prompt_message)
     final_data = {
         "model": model,
         "messages": [
@@ -390,11 +420,8 @@ def ask_question(documents, question, chat_history):
             .strip()
         )
 
-        response_tokens = calculate_token_count(answer_content)
-        total_tokens += response_tokens
-
-        return answer_content, total_tokens
+        return answer_content
 
     except requests.exceptions.RequestException as e:
         logging.error(f"Error answering question '{question}': {e}")
-        return "Error processing question.", total_tokens
+        return "Error processing question."
