@@ -257,7 +257,7 @@ celery_app.conf.update(
 
 class RelevanceCheckTask(Task):
     autoretry_for = (requests.exceptions.RequestException,)
-    retry_kwargs = {'max_retries': 9}
+    retry_kwargs = {'max_retries': 5}
     retry_backoff = 2  # Exponential backoff factor
 
     def exponential_backoff_with_jitter(self, attempt):
