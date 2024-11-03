@@ -427,8 +427,6 @@ def ask_question(documents, question, chat_history):
         Carefully verify all details from the content and do not generate any information that is not explicitly mentioned in it.
         Ensure the response is clearly formatted for readability.
 
-        Include references to the document name and page number(s) where the information was found.
-
         Question: {preprocessed_question}
         """
 
