@@ -9,3 +9,6 @@ python-docx
 celery
 redis
 azure-storage-blob
+streamlit
+scikit-learn
+docx
