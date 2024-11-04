@@ -7,14 +7,15 @@ import asyncio
 import io
 from docx import Document
 import tiktoken
+from sklearn.decomposition import LatentDirichletAllocation
+from sklearn.feature_extraction.text import CountVectorizer
+import re
 
-# Function to count tokens
 def count_tokens(text, model="gpt-4o"):
     encoding = tiktoken.encoding_for_model(model)
     tokens = encoding.encode(text)
     return len(tokens)
 
-# Initialize session state
 if "documents" not in st.session_state:
     st.session_state.documents = {}
 if "chat_history" not in st.session_state:
@@ -24,37 +25,58 @@ if "uploaded_files" not in st.session_state:
 if "doc_token" not in st.session_state:
     st.session_state.doc_token = 0
 
-# Handle user question
+def preprocess_text(text):
+    text = re.sub(r'\W+', ' ', text)
+    text = text.lower()
+    return text
+
+def extract_topics(documents, num_topics=5, num_words=10):
+    processed_texts = [preprocess_text(doc) for doc in documents.values()]
+    vectorizer = CountVectorizer(stop_words='english')
+    doc_term_matrix = vectorizer.fit_transform(processed_texts)
+    lda_model = LatentDirichletAllocation(n_components=num_topics, random_state=42)
+    lda_model.fit(doc_term_matrix)
+    topic_words = {}
+    words = vectorizer.get_feature_names_out()
+    for i, topic in enumerate(lda_model.components_):
+        topic_words[f"Topic {i + 1}"] = [words[j] for j in topic.argsort()[-num_words:]]
+    return topic_words
+
 async def handle_question(prompt, spinner_placeholder):
     if prompt:
         try:
             with spinner_placeholder.container():
-                answer, total_tokens = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    ask_question,
-                    st.session_state.documents,
-                    prompt,
-                    st.session_state.chat_history,
+                if "topics" in prompt.lower():
+                    topics = extract_topics(st.session_state.documents)
+                    answer = "Here are the main topics in your document(s):\n\n"
+                    for topic, words in topics.items():
+                        answer += f"{topic}: {', '.join(words)}\n"
+                    total_tokens = 0
+                else:
+                    answer, total_tokens = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        ask_question,
+                        st.session_state.documents,
+                        prompt,
+                        st.session_state.chat_history,
+                    )
+                st.session_state.chat_history.append(
+                    {
+                        "question": prompt,
+                        "answer": answer,
+                    }
                 )
-            st.session_state.chat_history.append(
-                {
-                    "question": prompt,
-                    "answer": answer,
-                }
-            )
         except Exception as e:
             st.error(f"Error processing question: {e}")
         finally:
             spinner_placeholder.empty()
 
-# Reset session state
 def reset_session():
     st.session_state.documents = {}
     st.session_state.chat_history = []
     st.session_state.uploaded_files = []
     st.session_state.doc_token = 0
 
-# Function to display chat history
 def display_chat():
     if st.session_state.chat_history:
         for i, chat in enumerate(st.session_state.chat_history):
@@ -70,7 +92,6 @@ def display_chat():
             """
             st.markdown(user_message, unsafe_allow_html=True)
             st.markdown(assistant_message, unsafe_allow_html=True)
-
             chat_content = {
                 "question": chat["question"],
                 "answer": chat["answer"],
@@ -79,7 +100,6 @@ def display_chat():
             word_io = io.BytesIO()
             doc.save(word_io)
             word_io.seek(0)
-
             st.download_button(
                 label="↴",
                 data=word_io,
@@ -87,7 +107,6 @@ def display_chat():
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             )
 
-# Function to generate Word document
 def generate_word_document(content):
     doc = Document()
     doc.add_heading("Chat Response", 0)
@@ -95,7 +114,6 @@ def generate_word_document(content):
     doc.add_paragraph(f"Answer: {content['answer']}")
     return doc
 
-# Sidebar for file upload
 with st.sidebar:
     uploaded_files = st.file_uploader(
         "Upload your documents",
@@ -110,12 +128,10 @@ with st.sidebar:
                 new_files.append(uploaded_file)
             else:
                 st.info(f"{uploaded_file.name} is already uploaded.")
-
         if new_files:
             progress_text = st.empty()
             progress_bar = st.progress(0)
             total_files = len(new_files)
-
             with st.spinner("Learning about your document(s)..."):
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     future_to_file = {
@@ -124,7 +140,6 @@ with st.sidebar:
                         ): uploaded_file
                         for index, uploaded_file in enumerate(new_files)
                     }
-
                     for i, future in enumerate(as_completed(future_to_file)):
                         uploaded_file = future_to_file[future]
                         try:
@@ -134,15 +149,10 @@ with st.sidebar:
                             st.success(f"{uploaded_file.name} processed successfully!")
                         except Exception as e:
                             st.error(f"Error processing {uploaded_file.name}: {e}")
-
                         progress_bar.progress((i + 1) / total_files)
-                        
             progress_text.text("Processing complete.")
             progress_bar.empty()
-
-    # Display total document tokens in the sidebar
     st.sidebar.write(f"Total document tokens: {st.session_state.doc_token}")
-
     if st.session_state.documents:
         download_data = json.dumps(st.session_state.documents, indent=4)
         st.download_button(
@@ -152,17 +162,14 @@ with st.sidebar:
             mime="application/json",
         )
 
-# App header and main interface
 st.image("logoD.png", width=200)
 st.title("docQuest")
 st.subheader("Unveil the Essence, Compare Easily, Analyze Smartly", divider="orange")
 
-# Chat interface
 if st.session_state.documents:
-    prompt = st.chat_input("Ask me anything about your documents", key="chat_input")
+    prompt = st.chat_input("Ask me anything about your documents, or type 'topics' to see main topics", key="chat_input")
     spinner_placeholder = st.empty()
     if prompt:
         asyncio.run(handle_question(prompt, spinner_placeholder))
 
-# Display the chat history
 display_chat()
