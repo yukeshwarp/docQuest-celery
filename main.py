@@ -31,7 +31,7 @@ def preprocess_text(text):
     return text
 
 def extract_topics(documents, num_topics=5, num_words=10):
-    processed_texts = [preprocess_text(doc) for doc in documents.values()]
+    processed_texts = [preprocess_text(str(doc)) for doc in documents.values()]
     vectorizer = CountVectorizer(stop_words='english')
     doc_term_matrix = vectorizer.fit_transform(processed_texts)
     lda_model = LatentDirichletAllocation(n_components=num_topics, random_state=42)
@@ -41,6 +41,7 @@ def extract_topics(documents, num_topics=5, num_words=10):
     for i, topic in enumerate(lda_model.components_):
         topic_words[f"Topic {i + 1}"] = [words[j] for j in topic.argsort()[-num_words:]]
     return topic_words
+
 
 async def handle_question(prompt, spinner_placeholder):
     if prompt:
