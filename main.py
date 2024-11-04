@@ -30,7 +30,7 @@ def preprocess_text(text):
     text = text.lower()
     return text
 
-def extract_topics(documents, num_topics=5, num_words=10):
+def extract_topics(documents, num_topics=10, num_words=10):
     processed_texts = [preprocess_text(str(doc)) for doc in documents.values()]
     vectorizer = CountVectorizer(stop_words='english')
     doc_term_matrix = vectorizer.fit_transform(processed_texts)
