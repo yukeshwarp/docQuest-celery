@@ -328,87 +328,100 @@ def ask_question(documents, question, chat_history):
     if not relevant_pages:
         return "The content of the provided documents does not contain an answer to your question.", total_tokens
 
-    # Step 1: Summarize each relevant page individually
-    page_summaries = []
-    for page in relevant_pages:
-        page_summary_prompt = f"""
-        Summarize the following page content briefly:
+    # Calculate total tokens for relevant pages
+    relevant_content_tokens = sum(
+        calculate_token_count(page["full_text"]) for page in relevant_pages
+    )
 
-        Document: {page['doc_name']}, Page {page['page_number']}
-        Full Text: {page['full_text']}
-        Image Analysis: {page['image_explanation']}
+    # Conditionally perform hierarchical summarization if token count exceeds 125,000
+    if relevant_content_tokens > 125000:
+        # Step 1: Summarize each relevant page individually
+        page_summaries = []
+        for page in relevant_pages:
+            page_summary_prompt = f"""
+            Summarize the following page content briefly:
+
+            Document: {page['doc_name']}, Page {page['page_number']}
+            Full Text: {page['full_text']}
+            Image Analysis: {page['image_explanation']}
+            """
+            summary_data = {
+                "model": model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are an assistant that summarizes page content concisely.",
+                    },
+                    {"role": "user", "content": page_summary_prompt},
+                ],
+                "temperature": 0.0,
+            }
+            try:
+                response = requests.post(
+                    f"{azure_endpoint}/openai/deployments/{model}/chat/completions?api-version={api_version}",
+                    headers=headers,
+                    json=summary_data,
+                    timeout=60,
+                )
+                response.raise_for_status()
+                page_summary = (
+                    response.json()
+                    .get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                    .strip()
+                )
+                page_summaries.append(page_summary)
+
+            except requests.exceptions.RequestException as e:
+                logging.error(f"Error summarizing page {page['page_number']} in '{page['doc_name']}': {e}")
+
+        # Step 2: Combine individual page summaries into section summaries
+        combined_page_summaries = "\n".join(page_summaries)
+        section_summary_prompt = f"""
+        Combine the following summaries into a concise summary that captures the overall information:
+
+        {combined_page_summaries}
         """
-        summary_data = {
+        section_summary_data = {
             "model": model,
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are an assistant that summarizes page content concisely.",
+                    "content": "You are an assistant that creates a concise summary from multiple summaries.",
                 },
-                {"role": "user", "content": page_summary_prompt},
+                {"role": "user", "content": section_summary_prompt},
             ],
             "temperature": 0.0,
         }
+
         try:
             response = requests.post(
                 f"{azure_endpoint}/openai/deployments/{model}/chat/completions?api-version={api_version}",
                 headers=headers,
-                json=summary_data,
+                json=section_summary_data,
                 timeout=60,
             )
             response.raise_for_status()
-            page_summary = (
+            combined_relevant_content = (
                 response.json()
                 .get("choices", [{}])[0]
                 .get("message", {})
-                .get("content", "")
+                .get("content", "No summary provided.")
                 .strip()
             )
-            page_summaries.append(page_summary)
 
         except requests.exceptions.RequestException as e:
-            logging.error(f"Error summarizing page {page['page_number']} in '{page['doc_name']}': {e}")
-
-    # Step 2: Combine individual page summaries into section summaries
-    combined_page_summaries = "\n".join(page_summaries)
-    section_summary_prompt = f"""
-    Combine the following summaries into a concise summary that captures the overall information:
-
-    {combined_page_summaries}
-    """
-    section_summary_data = {
-        "model": model,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are an assistant that creates a concise summary from multiple summaries.",
-            },
-            {"role": "user", "content": section_summary_prompt},
-        ],
-        "temperature": 0.0,
-    }
-
-    try:
-        response = requests.post(
-            f"{azure_endpoint}/openai/deployments/{model}/chat/completions?api-version={api_version}",
-            headers=headers,
-            json=section_summary_data,
-            timeout=60,
-        )
-        response.raise_for_status()
-        combined_relevant_content = (
-            response.json()
-            .get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "No summary provided.")
-            .strip()
+            logging.error("Error combining summaries: {}".format(e))
+            return "Error processing question.", total_tokens
+    else:
+        # If within token limit, combine all relevant pages directly
+        combined_relevant_content = "\n".join(
+            f"Document: {page['doc_name']}, Page {page['page_number']}\nFull Text: {page['full_text']}\nImage Analysis: {page['image_explanation']}"
+            for page in relevant_pages
         )
 
-    except requests.exceptions.RequestException as e:
-        logging.error("Error combining summaries: {}".format(e))
-        return "Error processing question.", total_tokens
-
-    # Step 3: Generate final answer based on combined summary
+    # Step 3: Generate final answer based on combined summary or full relevant content
     conversation_history = "".join(
         f"User: {preprocess_text(chat['question'])}\nAssistant: {preprocess_text(chat['answer'])}\n"
         for chat in chat_history
