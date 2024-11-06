@@ -7,8 +7,6 @@ import asyncio
 import io
 from docx import Document
 import tiktoken
-from sklearn.decomposition import LatentDirichletAllocation
-from sklearn.feature_extraction.text import CountVectorizer
 import re
 
 def count_tokens(text, model="gpt-4o"):
@@ -30,41 +28,21 @@ def preprocess_text(text):
     text = text.lower()
     return text
 
-def extract_topics(documents, num_topics=10, num_words=10):
-    processed_texts = [preprocess_text(str(doc)) for doc in documents.values()]
-    vectorizer = CountVectorizer(stop_words='english')
-    doc_term_matrix = vectorizer.fit_transform(processed_texts)
-    lda_model = LatentDirichletAllocation(n_components=num_topics, random_state=42)
-    lda_model.fit(doc_term_matrix)
-    topic_words = {}
-    words = vectorizer.get_feature_names_out()
-    for i, topic in enumerate(lda_model.components_):
-        topic_words[f"Topic {i + 1}"] = [words[j] for j in topic.argsort()[-num_words:]]
-    return topic_words
-
-
 async def handle_question(prompt, spinner_placeholder):
     if prompt:
         try:
             with spinner_placeholder.container():
-                if "topics" in prompt.lower():
-                    topics = extract_topics(st.session_state.documents)
-                    answer = "Here are the main topics in your document(s):\n\n"
-                    for topic, words in topics.items():
-                        answer += f"{topic}: {', '.join(words)}\n"
-                    total_tokens = 0
-                else:
-                    answer, total_tokens = await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        ask_question,
-                        st.session_state.documents,
-                        prompt,
-                        st.session_state.chat_history,
-                    )
+                answer, total_tokens = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    ask_question,
+                    st.session_state.documents,
+                    prompt,
+                    st.session_state.chat_history,
+                )
                 st.session_state.chat_history.append(
                     {
                         "question": prompt,
-                        "answer": answer,
+                        "answer": f"{answer}\nTotal tokens: {total_tokens}",
                     }
                 )
         except Exception as e:
@@ -168,7 +146,7 @@ st.title("docQuest")
 st.subheader("Unveil the Essence, Compare Easily, Analyze Smartly", divider="orange")
 
 if st.session_state.documents:
-    prompt = st.chat_input("Ask me anything about your documents, or type 'topics' to see main topics", key="chat_input")
+    prompt = st.chat_input("Ask me anything about your documents", key="chat_input")
     spinner_placeholder = st.empty()
     if prompt:
         asyncio.run(handle_question(prompt, spinner_placeholder))
