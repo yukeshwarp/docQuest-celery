@@ -242,7 +242,7 @@ def ask_question(documents, question, chat_history):
     def calculate_token_count(text):
         return len(text.split())
 
-    total_tokens = calculate_token_count(preprocessed_question)
+    total_tokens = count_tokens(preprocessed_question)
 
     for doc_name, doc_data in documents.items():
         for page in doc_data["pages"]:
@@ -328,14 +328,18 @@ def ask_question(documents, question, chat_history):
     if not relevant_pages:
         return "The content of the provided documents does not contain an answer to your question.", total_tokens
 
-    # Calculate total tokens for relevant pages
-    relevant_content_tokens = sum(
-        calculate_token_count(page["full_text"]) for page in relevant_pages
+    # Calculate token count for all relevant pages
+    relevant_pages_content = "\n".join(
+        f"Document: {page['doc_name']}, Page {page['page_number']}\nFull Text: {page['full_text']}\nImage Analysis: {page['image_explanation']}"
+        for page in relevant_pages
     )
+    relevant_tokens = count_tokens(relevant_pages_content)
 
-    # Conditionally perform hierarchical summarization if token count exceeds 125,000
-    if relevant_content_tokens > 125000:
-        # Step 1: Summarize each relevant page individually
+    if relevant_tokens <= 125000:
+        # Use entire relevant content if token count is within the limit
+        combined_relevant_content = relevant_pages_content
+    else:
+        # Step 1: Summarize each relevant page individually if token count exceeds the limit
         page_summaries = []
         for page in relevant_pages:
             page_summary_prompt = f"""
@@ -414,14 +418,8 @@ def ask_question(documents, question, chat_history):
         except requests.exceptions.RequestException as e:
             logging.error("Error combining summaries: {}".format(e))
             return "Error processing question.", total_tokens
-    else:
-        # If within token limit, combine all relevant pages directly
-        combined_relevant_content = "\n".join(
-            f"Document: {page['doc_name']}, Page {page['page_number']}\nFull Text: {page['full_text']}\nImage Analysis: {page['image_explanation']}"
-            for page in relevant_pages
-        )
 
-    # Step 3: Generate final answer based on combined summary or full relevant content
+    # Step 3: Generate final answer based on combined relevant content
     conversation_history = "".join(
         f"User: {preprocess_text(chat['question'])}\nAssistant: {preprocess_text(chat['answer'])}\n"
         for chat in chat_history
@@ -443,7 +441,7 @@ def ask_question(documents, question, chat_history):
         Question: {preprocessed_question}
         """
 
-    prompt_tokens = calculate_token_count(prompt_message)
+    prompt_tokens = count_tokens(prompt_message)
     final_data = {
         "model": model,
         "messages": [
@@ -472,7 +470,7 @@ def ask_question(documents, question, chat_history):
             .strip()
         )
 
-        response_tokens = calculate_token_count(answer_content)
+        response_tokens = count_tokens(answer_content)
         total_tokens += response_tokens
 
         return answer_content, total_tokens
